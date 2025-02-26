@@ -9,13 +9,19 @@ router.use(auth);
 // Get all reservations with optional filters
 router.get('/', reservationController.getAllReservations);
 
+// Get dashboard stats
+router.get('/stats', reservationController.getStats);
+
+// Get recent reservations
+router.get('/recent', reservationController.getRecentReservations);
+
 // Get reservation by QR code
 router.get('/qr/:qrCode', reservationController.getReservationByQR);
 
-// Check in a reservation
-router.post('/:id/check-in', reservationController.checkIn);
+// Log check-in or check-out
+router.post('/:id/log', reservationController.logCheckInOut);
 
-// Check out a reservation
-router.post('/:id/check-out', reservationController.checkOut);
+// Get check-in logs for a reservation
+router.get('/:id/logs', reservationController.getCheckInLogs);
 
 module.exports = router;

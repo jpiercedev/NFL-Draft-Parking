@@ -15,9 +15,8 @@ function App() {
       <Router>
         <Routes>
           <Route path="/login" element={<Login />} />
-          
-          <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route element={<PrivateRoute><Layout /></PrivateRoute>}>
+            <Route index element={<Navigate to="/dashboard" />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="scanner" element={<Scanner />} />
             <Route path="reservations" element={<Reservations />} />

@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { Reservation } = require('../models');
+const { Reservation, CheckInLog } = require('../models');
 const { sendEmail } = require('../services/emailService');
 const QRCode = require('qrcode');
 
@@ -43,13 +43,23 @@ exports.getReservations = async (req, res) => {
 exports.getReservationByQR = async (req, res) => {
   try {
     const { qrCode } = req.params;
-    const reservation = await Reservation.findOne({ where: { qrCode } });
+    const reservation = await Reservation.findOne({
+      where: { qrCode },
+      include: [{
+        model: CheckInLog,
+        as: 'checkInLogs',
+        order: [['timestamp', 'DESC']]
+      }]
+    });
     
     if (!reservation) {
       return res.status(404).json({ error: 'Reservation not found' });
     }
 
-    res.json(reservation);
+    const reservationWithQR = reservation.get({ plain: true });
+    reservationWithQR.qrCodeDataUrl = await generateQRCodeDataURL(qrCode);
+
+    res.json(reservationWithQR);
   } catch (error) {
     console.error('Error fetching reservation:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -108,11 +118,10 @@ exports.checkOut = async (req, res) => {
 
 exports.getAllReservations = async (req, res) => {
   try {
-    const { parkingLot, status, date, search } = req.query;
+    const { parkingLot, date, search } = req.query;
     const where = {};
 
     if (parkingLot) where.parkingLot = parkingLot;
-    if (status) where.status = status;
     if (date) where.reservationDate = date;
     if (search) {
       where[Op.or] = [
@@ -124,6 +133,11 @@ exports.getAllReservations = async (req, res) => {
     const reservations = await Reservation.findAll({
       where,
       order: [['reservationDate', 'DESC']],
+      include: [{
+        model: CheckInLog,
+        as: 'checkInLogs',
+        order: [['timestamp', 'DESC']]
+      }]
     });
 
     // Generate QR code data URLs for each reservation
@@ -142,48 +156,92 @@ exports.getAllReservations = async (req, res) => {
   }
 };
 
+exports.logCheckInOut = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { type, notes } = req.body;
+
+    if (!['check_in', 'check_out'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid check-in/out type' });
+    }
+
+    const reservation = await Reservation.findByPk(id);
+    if (!reservation) {
+      return res.status(404).json({ error: 'Reservation not found' });
+    }
+
+    const log = await CheckInLog.create({
+      reservationId: id,
+      type,
+      timestamp: new Date(),
+      notes
+    });
+
+    // Get updated reservation with all logs
+    const updatedReservation = await Reservation.findByPk(id, {
+      include: [{
+        model: CheckInLog,
+        as: 'checkInLogs',
+        order: [['timestamp', 'DESC']]
+      }]
+    });
+
+    res.json(updatedReservation);
+  } catch (error) {
+    console.error('Error logging check-in/out:', error);
+    res.status(500).json({ error: 'Failed to log check-in/out' });
+  }
+};
+
+exports.getCheckInLogs = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const logs = await CheckInLog.findAll({
+      where: { reservationId: id },
+      order: [['timestamp', 'DESC']]
+    });
+    res.json(logs);
+  } catch (error) {
+    console.error('Error fetching check-in logs:', error);
+    res.status(500).json({ error: 'Failed to fetch check-in logs' });
+  }
+};
+
 exports.getStats = async (req, res) => {
   try {
-    const [totalReservations, checkedIn, checkedOut, pending] = await Promise.all([
-      Reservation.count(),
-      Reservation.count({ where: { status: 'checked_in' } }),
-      Reservation.count({ where: { status: 'checked_out' } }),
-      Reservation.count({ where: { status: 'pending' } })
-    ]);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    const lombardiStats = await Reservation.count({
+    const totalReservations = await Reservation.count();
+    
+    const todayCheckIns = await CheckInLog.count({
       where: {
-        parkingLot: 'Lombardi',
-        status: 'checked_in'
-      }
-    });
-
-    const militaryStats = await Reservation.count({
-      where: {
-        parkingLot: 'Military',
-        status: 'checked_in'
-      }
-    });
-
-    res.json({
-      totalReservations,
-      checkedIn,
-      checkedOut,
-      pending,
-      lotStats: {
-        Lombardi: {
-          total: 100, // Replace with actual capacity
-          occupied: lombardiStats
-        },
-        Military: {
-          total: 150, // Replace with actual capacity
-          occupied: militaryStats
+        type: 'check_in',
+        timestamp: {
+          [Op.gte]: today
         }
       }
     });
+
+    const todayCheckOuts = await CheckInLog.count({
+      where: {
+        type: 'check_out',
+        timestamp: {
+          [Op.gte]: today
+        }
+      }
+    });
+
+    const stats = {
+      totalReservations,
+      todayCheckIns,
+      todayCheckOuts
+    };
+
+    res.json(stats);
   } catch (error) {
     console.error('Error fetching stats:', error);
-    res.status(500).json({ error: 'Failed to fetch stats' });
+    res.status(500).json({ error: 'Failed to fetch dashboard data' });
   }
 };
 
@@ -191,9 +249,13 @@ exports.getRecentReservations = async (req, res) => {
   try {
     const reservations = await Reservation.findAll({
       order: [['createdAt', 'DESC']],
-      limit: 10
+      limit: 5,
+      include: [{
+        model: CheckInLog,
+        as: 'checkInLogs',
+        order: [['timestamp', 'DESC']]
+      }]
     });
-
     res.json(reservations);
   } catch (error) {
     console.error('Error fetching recent reservations:', error);

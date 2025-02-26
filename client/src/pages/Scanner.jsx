@@ -2,12 +2,14 @@ import { useState, useEffect, useRef } from 'react';
 import jsQR from 'jsqr';
 import { useDispatch } from 'react-redux';
 import axios from 'axios';
+import { format } from 'date-fns';
 
 function Scanner() {
   const [scanning, setScanning] = useState(true);
   const [reservation, setReservation] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [notes, setNotes] = useState('');
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const dispatch = useDispatch();
@@ -77,19 +79,20 @@ function Scanner() {
     }
   };
 
-  const handleCheckInOut = async (action) => {
+  const handleCheckInOut = async (type) => {
     if (!reservation) return;
     
     setLoading(true);
     try {
       const response = await axios.post(
-        `/api/reservations/${reservation.id}/${action}`,
-        {},
+        `/api/reservations/${reservation.id}/log`,
+        { type, notes },
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       );
       setReservation(response.data);
+      setNotes('');
     } catch (err) {
-      setError(err.response?.data?.error || `Failed to ${action} reservation`);
+      setError(err.response?.data?.error || `Failed to log ${type}`);
     } finally {
       setLoading(false);
     }
@@ -99,129 +102,161 @@ function Scanner() {
     setScanning(true);
     setReservation(null);
     setError(null);
+    setNotes('');
     startCamera();
   };
 
+  // Sort check-in logs by timestamp in descending order (most recent first)
+  const sortedLogs = reservation?.checkInLogs ? 
+    [...reservation.checkInLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) :
+    [];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-4">
+        <div className="text-red-500 mb-4">{error}</div>
+        <button
+          onClick={resetScanner}
+          className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        <div className="px-4 py-5 sm:p-6">
-          <h2 className="text-2xl font-semibold text-gray-900 mb-4">QR Code Scanner</h2>
-          
-          {error && (
-            <div className="mb-4 bg-red-50 border-l-4 border-red-400 p-4">
-              <div className="flex">
-                <div className="flex-shrink-0">
-                  <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                  </svg>
+    <div className="min-h-screen bg-gray-100">
+      {scanning ? (
+        <div className="relative">
+          <video
+            ref={videoRef}
+            className="w-full h-screen object-cover"
+            playsInline
+          />
+          <canvas
+            ref={canvasRef}
+            className="hidden"
+          />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-64 h-64 border-4 border-white rounded-lg"></div>
+          </div>
+        </div>
+      ) : reservation ? (
+        <div className="container mx-auto px-4 py-8">
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-900">Reservation Details</h2>
+              <button
+                onClick={resetScanner}
+                className="text-gray-600 hover:text-gray-800"
+              >
+                Scan Another
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Customer Information</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-500">Name</label>
+                    <div className="mt-1 text-sm text-gray-900">{reservation.customerName}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-500">Email</label>
+                    <div className="mt-1 text-sm text-gray-900">{reservation.customerEmail}</div>
+                  </div>
                 </div>
-                <div className="ml-3">
-                  <p className="text-sm text-red-700">{error}</p>
+              </div>
+
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Vehicle Information</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-500">Make & Model</label>
+                    <div className="mt-1 text-sm text-gray-900">
+                      {`${reservation.vehicleMake} ${reservation.vehicleModel}`}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-500">Color</label>
+                    <div className="mt-1 text-sm text-gray-900">{reservation.vehicleColor}</div>
+                  </div>
                 </div>
               </div>
             </div>
-          )}
 
-          {scanning ? (
-            <div className="relative">
-              <video
-                ref={videoRef}
-                className="w-full rounded-lg shadow-inner"
-                playsInline
-              />
-              <canvas
-                ref={canvasRef}
-                className="hidden"
-              />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-48 h-48 border-4 border-indigo-500 rounded-lg"></div>
-              </div>
-            </div>
-          ) : reservation ? (
-            <div className="space-y-6">
-              <div className="bg-gray-50 px-4 py-5 sm:p-6 rounded-lg">
-                <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Customer Name</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{reservation.customerName}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Email</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{reservation.customerEmail}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Vehicle</dt>
-                    <dd className="mt-1 text-sm text-gray-900">
-                      {reservation.vehicleMake} {reservation.vehicleModel} ({reservation.vehicleColor})
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Parking Lot</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{reservation.parkingLot}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm font-medium text-gray-500">Status</dt>
-                    <dd className="mt-1">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        reservation.status === 'checked_in' ? 'bg-green-100 text-green-800' :
-                        reservation.status === 'checked_out' ? 'bg-gray-100 text-gray-800' :
-                        'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {reservation.status.replace('_', ' ').toUpperCase()}
-                      </span>
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-
-              <div className="flex space-x-4">
-                {reservation.status === 'pending' && (
+            <div className="mb-8">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Check-in/out</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Notes (optional)
+                  </label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                    rows="3"
+                    placeholder="Add any notes about this check-in/out..."
+                  />
+                </div>
+                <div className="flex space-x-4">
                   <button
-                    onClick={() => handleCheckInOut('check-in')}
-                    disabled={loading}
-                    className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                    onClick={() => handleCheckInOut('check_in')}
+                    className="flex-1 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
                   >
                     Check In
                   </button>
-                )}
-                {reservation.status === 'checked_in' && (
                   <button
-                    onClick={() => handleCheckInOut('check-out')}
-                    disabled={loading}
-                    className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                    onClick={() => handleCheckInOut('check_out')}
+                    className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
                   >
                     Check Out
                   </button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Check-in History</h3>
+              <div className="space-y-4">
+                {sortedLogs.length > 0 ? (
+                  sortedLogs.map((log) => (
+                    <div key={log.id} className="bg-gray-50 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full
+                          ${log.type === 'check_in' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
+                          {log.type === 'check_in' ? 'Check In' : 'Check Out'}
+                        </span>
+                        <span className="text-sm text-gray-500">
+                          {format(new Date(log.timestamp), 'MMM dd, yyyy h:mm a')}
+                        </span>
+                      </div>
+                      {log.notes && (
+                        <div className="text-sm text-gray-600 mt-1">
+                          {log.notes}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-gray-500">No check-in history available</div>
                 )}
-                <button
-                  onClick={resetScanner}
-                  disabled={loading}
-                  className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                >
-                  Scan Another
-                </button>
               </div>
             </div>
-          ) : (
-            <div className="text-center py-12">
-              <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No QR Code Found</h3>
-              <p className="mt-1 text-sm text-gray-500">Please try scanning again.</p>
-              <div className="mt-6">
-                <button
-                  onClick={resetScanner}
-                  className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  Try Again
-                </button>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

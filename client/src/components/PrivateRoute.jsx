@@ -22,11 +22,7 @@ function PrivateRoute({ children }) {
     );
   }
 
-  if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  return children;
+  return isAuthenticated ? children : <Navigate to="/login" state={{ from: location.pathname }} />;
 }
 
 export default PrivateRoute;

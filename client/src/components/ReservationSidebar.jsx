@@ -3,6 +3,11 @@ import { format } from 'date-fns';
 function ReservationSidebar({ reservation, onClose }) {
   if (!reservation) return null;
 
+  // Sort check-in logs by timestamp in descending order (most recent first)
+  const sortedLogs = reservation.checkInLogs ? 
+    [...reservation.checkInLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) :
+    [];
+
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full" onClick={onClose}>
       <div className="relative top-0 right-0 h-full w-96 max-w-full bg-white shadow-xl float-right" onClick={e => e.stopPropagation()}>
@@ -77,31 +82,35 @@ function ReservationSidebar({ reservation, onClose }) {
                     {format(new Date(reservation.reservationDate), 'MMMM dd, yyyy')}
                   </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-500">Status</label>
-                  <div className="mt-1">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
-                      ${reservation.status === 'checked_in' ? 'bg-green-100 text-green-800' : 
-                        reservation.status === 'checked_out' ? 'bg-blue-100 text-blue-800' : 
-                        'bg-yellow-100 text-yellow-800'}`}>
-                      {reservation.status.replace('_', ' ')}
-                    </span>
-                  </div>
-                </div>
-                {reservation.checkInTime && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-500">Check-in Time</label>
-                    <div className="mt-1 text-sm text-gray-900">
-                      {format(new Date(reservation.checkInTime), 'h:mm a')}
+              </div>
+            </div>
+
+            {/* Check-in Logs */}
+            <div className="mb-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Check-in History</h3>
+              <div className="space-y-4">
+                {sortedLogs.length > 0 ? (
+                  sortedLogs.map((log) => (
+                    <div key={log.id} className="bg-gray-50 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full
+                          ${log.type === 'check_in' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
+                          {log.type === 'check_in' ? 'Check In' : 'Check Out'}
+                        </span>
+                        <span className="text-sm text-gray-500">
+                          {format(new Date(log.timestamp), 'MMM dd, yyyy h:mm a')}
+                        </span>
+                      </div>
+                      {log.notes && (
+                        <div className="text-sm text-gray-600 mt-1">
+                          {log.notes}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
-                {reservation.checkOutTime && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-500">Check-out Time</label>
-                    <div className="mt-1 text-sm text-gray-900">
-                      {format(new Date(reservation.checkOutTime), 'h:mm a')}
-                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-gray-500 text-center py-4">
+                    No check-in history available
                   </div>
                 )}
               </div>

@@ -1,7 +1,17 @@
-const { DataTypes } = require('sequelize');
+'use strict';
+const { Model, DataTypes } = require('sequelize');
 
 module.exports = (sequelize) => {
-  const Reservation = sequelize.define('Reservation', {
+  class Reservation extends Model {
+    static associate(models) {
+      Reservation.hasMany(models.CheckInLog, {
+        foreignKey: 'reservationId',
+        as: 'checkInLogs'
+      });
+    }
+  }
+
+  Reservation.init({
     id: {
       type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
@@ -32,12 +42,8 @@ module.exports = (sequelize) => {
       allowNull: false
     },
     parkingLot: {
-      type: DataTypes.ENUM('Lombardi', 'Military'),
+      type: DataTypes.STRING,
       allowNull: false
-    },
-    status: {
-      type: DataTypes.ENUM('pending', 'checked_in', 'checked_out'),
-      defaultValue: 'pending'
     },
     qrCode: {
       type: DataTypes.STRING,
@@ -47,13 +53,10 @@ module.exports = (sequelize) => {
     reservationDate: {
       type: DataTypes.DATE,
       allowNull: false
-    },
-    checkInTime: {
-      type: DataTypes.DATE
-    },
-    checkOutTime: {
-      type: DataTypes.DATE
     }
+  }, {
+    sequelize,
+    modelName: 'Reservation',
   });
 
   return Reservation;
