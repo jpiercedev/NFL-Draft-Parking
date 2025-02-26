@@ -85,7 +85,6 @@ function Dashboard() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parking Lot</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -96,23 +95,6 @@ function Dashboard() {
                     {new Date(reservation.reservationDate).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">{reservation.parkingLot}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {reservation.checkInLogs && reservation.checkInLogs.length > 0 ? (
-                      reservation.checkInLogs[0].type === 'check_in' ? (
-                        <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
-                          Checked In
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">
-                          Checked Out
-                        </span>
-                      )
-                    ) : (
-                      <span className="px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-800">
-                        Pending
-                      </span>
-                    )}
-                  </td>
                 </tr>
               ))}
             </tbody>

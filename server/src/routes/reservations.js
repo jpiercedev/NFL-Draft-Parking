@@ -24,4 +24,7 @@ router.post('/:id/log', reservationController.logCheckInOut);
 // Get check-in logs for a reservation
 router.get('/:id/logs', reservationController.getCheckInLogs);
 
+// Update a reservation
+router.put('/:id', auth, reservationController.updateReservation);
+
 module.exports = router;

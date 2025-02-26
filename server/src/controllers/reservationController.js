@@ -262,3 +262,73 @@ exports.getRecentReservations = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch recent reservations' });
   }
 };
+
+// Update a reservation
+exports.updateReservation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      customerName,
+      customerEmail,
+      vehicleMake,
+      vehicleModel,
+      vehicleColor,
+      parkingLot,
+      reservationDate
+    } = req.body;
+
+    // Find the reservation
+    const reservation = await Reservation.findByPk(id, {
+      include: [{ model: CheckInLog, as: 'checkInLogs' }]
+    });
+
+    if (!reservation) {
+      return res.status(404).json({ error: 'Reservation not found' });
+    }
+
+    // Update the reservation
+    await reservation.update({
+      customerName,
+      customerEmail,
+      vehicleMake,
+      vehicleModel,
+      vehicleColor,
+      parkingLot,
+      reservationDate: new Date(reservationDate)
+    });
+
+    // Fetch the updated reservation with its check-in logs
+    const updatedReservation = await Reservation.findByPk(id, {
+      include: [{
+        model: CheckInLog,
+        as: 'checkInLogs',
+        order: [['timestamp', 'DESC']]
+      }]
+    });
+
+    // Generate QR code data URL
+    const qrCodeDataUrl = await generateQRCodeDataURL(updatedReservation.qrCode);
+    
+    // Add the QR code data URL to the response
+    const reservationData = updatedReservation.toJSON();
+    reservationData.qrCodeDataUrl = qrCodeDataUrl;
+
+    res.json(reservationData);
+  } catch (error) {
+    console.error('Error updating reservation:', error);
+    res.status(500).json({ error: 'Failed to update reservation' });
+  }
+};
+
+module.exports = {
+  getReservations: exports.getReservations,
+  getReservationByQR: exports.getReservationByQR,
+  checkIn: exports.checkIn,
+  checkOut: exports.checkOut,
+  getAllReservations: exports.getAllReservations,
+  logCheckInOut: exports.logCheckInOut,
+  getCheckInLogs: exports.getCheckInLogs,
+  getStats: exports.getStats,
+  getRecentReservations: exports.getRecentReservations,
+  updateReservation: exports.updateReservation
+};
