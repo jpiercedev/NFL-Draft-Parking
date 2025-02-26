@@ -18,58 +18,140 @@ function Scanner() {
   const streamRef = useRef(null);
   const dispatch = useDispatch();
 
+  const checkCameraSupport = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('Camera API is not supported in this browser');
+    }
+
+    try {
+      // Check if we can enumerate devices
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter(device => device.kind === 'videoinput');
+      
+      if (cameras.length === 0) {
+        throw new Error('No camera devices found');
+      }
+
+      // Check if we already have permission
+      const permission = await navigator.permissions.query({ name: 'camera' });
+      setPermissionState(permission.state);
+      
+      return cameras;
+    } catch (err) {
+      console.error('Camera support check error:', err);
+      throw new Error('Failed to check camera support: ' + err.message);
+    }
+  };
+
   const requestCameraPermission = async () => {
     try {
       setShowPermissionRequest(false);
-      const result = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: "environment",
+      setError(null);
+
+      // First check if camera is supported
+      await checkCameraSupport();
+
+      // Try to get the camera stream
+      const constraints = {
+        video: {
+          facingMode: { ideal: 'environment' },
           width: { ideal: 1280 },
           height: { ideal: 720 }
-        } 
-      });
+        }
+      };
+
+      console.log('Requesting camera with constraints:', constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      // Check if we actually got a valid stream
+      const tracks = stream.getVideoTracks();
+      if (!tracks || tracks.length === 0) {
+        throw new Error('No video track available in the camera stream');
+      }
+
+      console.log('Camera stream obtained:', tracks[0].getSettings());
       setPermissionState('granted');
-      return result;
+      return stream;
     } catch (err) {
-      console.error('Permission error:', err);
+      console.error('Camera permission error:', {
+        name: err.name,
+        message: err.message,
+        constraint: err.constraint,
+        stack: err.stack
+      });
+
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setPermissionState('denied');
+        throw new Error('Camera permission was denied. Please grant camera access to use the scanner.');
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        throw new Error('No camera found on your device.');
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        throw new Error('Your camera is in use by another application.');
+      } else if (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError') {
+        throw new Error('Could not find a suitable camera. Please try using a different camera.');
       }
-      throw err;
+      
+      throw new Error(`Camera error: ${err.message}`);
     }
   };
 
   const startCamera = async () => {
     try {
-      setError(null);
       const stream = await requestCameraPermission();
       streamRef.current = stream;
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        
+        // Wait for the video to be ready
+        await new Promise((resolve) => {
+          videoRef.current.onloadedmetadata = () => {
+            resolve();
+          };
+        });
+
         await videoRef.current.play();
         setScanning(true);
         requestAnimationFrame(tick);
       }
     } catch (err) {
+      console.error('Start camera error:', err);
       setError(err.message);
       setScanning(false);
-      console.error('Scanner error:', err);
+      setShowPermissionRequest(true);
     }
   };
 
   const stopCamera = () => {
-    if (videoRef.current?.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
     setScanning(false);
   };
 
   useEffect(() => {
+    // Check camera support on mount
+    checkCameraSupport().catch(err => {
+      setError(err.message);
+    });
+
     return () => {
       stopCamera();
     };
   }, []);
+
+  const handleRetry = () => {
+    setError(null);
+    setShowPermissionRequest(true);
+    setPermissionState('prompt');
+    if (streamRef.current) {
+      stopCamera();
+    }
+  };
 
   const toggleFlashlight = async () => {
     if (!streamRef.current) return;
@@ -218,7 +300,7 @@ function Scanner() {
             </div>
           ) : (
             <button
-              onClick={resetScanner}
+              onClick={handleRetry}
               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
             >
               Try Again
