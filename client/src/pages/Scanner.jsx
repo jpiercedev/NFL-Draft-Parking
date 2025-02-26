@@ -5,43 +5,64 @@ import axios from 'axios';
 import { format } from 'date-fns';
 
 function Scanner() {
-  const [scanning, setScanning] = useState(true);
+  const [scanning, setScanning] = useState(false);
   const [reservation, setReservation] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState('');
   const [flashlightOn, setFlashlightOn] = useState(false);
+  const [permissionState, setPermissionState] = useState('prompt'); // 'prompt', 'granted', 'denied'
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const dispatch = useDispatch();
 
-  useEffect(() => {
-    startCamera();
-    return () => {
-      if (streamRef.current) {
-        const tracks = streamRef.current.getTracks();
-        tracks.forEach(track => track.stop());
+  const requestCameraPermission = async () => {
+    try {
+      const result = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      setPermissionState('granted');
+      return result;
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setPermissionState('denied');
       }
-    };
-  }, []);
+      throw err;
+    }
+  };
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" }
-      });
-      streamRef.current = stream;
+      setError(null);
+      setScanning(true);
+
+      // Request camera permission
+      const stream = await requestCameraPermission();
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        await videoRef.current.play();
         requestAnimationFrame(tick);
       }
     } catch (err) {
-      setError('Unable to access camera. Please make sure you have granted camera permissions.');
+      setError(err.message);
       setScanning(false);
+      console.error('Scanner error:', err);
     }
   };
+
+  const stopCamera = () => {
+    if (videoRef.current?.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+    }
+    setScanning(false);
+  };
+
+  useEffect(() => {
+    startCamera();
+    return () => {
+      stopCamera();
+    };
+  }, []);
 
   const toggleFlashlight = async () => {
     if (!streamRef.current) return;
@@ -130,35 +151,56 @@ function Scanner() {
     [...reservation.checkInLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) :
     [];
 
-  if (loading) {
+  if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#EDF0F4]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#0449FE]"></div>
+      <div className="min-h-screen bg-[#EDF0F4] flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
+          <div className="mb-4 text-red-600">
+            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold text-[#040510] mb-2">Camera Access Required</h2>
+          <p className="text-[#4C4E61] mb-6">
+            {permissionState === 'denied' 
+              ? "Camera access was denied. Please enable camera access in your browser settings to use the QR scanner."
+              : "Unable to access camera. Please make sure you have granted camera permissions."}
+          </p>
+          {permissionState === 'denied' ? (
+            <div className="space-y-4">
+              <p className="text-sm text-[#4C4E61]">
+                To enable camera access:
+                <br />
+                1. Click the camera icon in your browser's address bar
+                <br />
+                2. Select "Allow" for camera access
+                <br />
+                3. Refresh this page
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
+              >
+                Refresh Page
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={resetScanner}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
+            >
+              Try Again
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
-  if (error) {
+  if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-[#EDF0F4]">
-        <div className="bg-red-50 border-l-4 border-[#E53935] p-4 mb-4 w-full max-w-md rounded-md">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <svg className="h-5 w-5 text-[#E53935]" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div className="ml-3">
-              <p className="text-sm text-[#E53935]">{error}</p>
-            </div>
-          </div>
-        </div>
-        <button
-          onClick={resetScanner}
-          className="px-4 py-2 bg-[#0449FE] text-white font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-[#0449FE] focus:ring-offset-2"
-        >
-          Try Again
-        </button>
+      <div className="min-h-screen flex items-center justify-center bg-[#EDF0F4]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#0449FE]"></div>
       </div>
     );
   }
