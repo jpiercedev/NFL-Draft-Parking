@@ -9,9 +9,10 @@ function Scanner() {
   const [reservation, setReservation] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [showPermissionRequest, setShowPermissionRequest] = useState(true);
+  const [permissionState, setPermissionState] = useState('prompt');
   const [notes, setNotes] = useState('');
   const [flashlightOn, setFlashlightOn] = useState(false);
-  const [permissionState, setPermissionState] = useState('prompt'); // 'prompt', 'granted', 'denied'
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -19,10 +20,18 @@ function Scanner() {
 
   const requestCameraPermission = async () => {
     try {
-      const result = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      setShowPermissionRequest(false);
+      const result = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      });
       setPermissionState('granted');
       return result;
     } catch (err) {
+      console.error('Permission error:', err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setPermissionState('denied');
       }
@@ -33,14 +42,13 @@ function Scanner() {
   const startCamera = async () => {
     try {
       setError(null);
-      setScanning(true);
-
-      // Request camera permission
       const stream = await requestCameraPermission();
+      streamRef.current = stream;
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+        setScanning(true);
         requestAnimationFrame(tick);
       }
     } catch (err) {
@@ -58,7 +66,6 @@ function Scanner() {
   };
 
   useEffect(() => {
-    startCamera();
     return () => {
       stopCamera();
     };
@@ -150,6 +157,31 @@ function Scanner() {
   const sortedLogs = reservation?.checkInLogs ? 
     [...reservation.checkInLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) :
     [];
+
+  if (showPermissionRequest) {
+    return (
+      <div className="min-h-screen bg-[#EDF0F4] flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
+          <div className="mb-4 text-[#0449FE]">
+            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold text-[#040510] mb-2">Camera Access Required</h2>
+          <p className="text-[#4C4E61] mb-6">
+            To scan QR codes, we need access to your camera. Click below to enable camera access.
+          </p>
+          <button
+            onClick={startCamera}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
+          >
+            Enable Camera
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (error) {
     return (
