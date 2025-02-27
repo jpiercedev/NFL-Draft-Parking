@@ -8,29 +8,25 @@ function Scanner() {
   const [scanning, setScanning] = useState(false);
   const [showPermissionRequest, setShowPermissionRequest] = useState(true);
   const [error, setError] = useState(null);
-  const [debugInfo, setDebugInfo] = useState('');
-  const [reservation, setReservation] = useState(null);
-  const [showNoteModal, setShowNoteModal] = useState(false);
-  const [note, setNote] = useState('');
-  const [history, setHistory] = useState([]);
-  const [isCheckIn, setIsCheckIn] = useState(true);
-  const dispatch = useDispatch();
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
   const scannerRef = useRef(null);
+  const dispatch = useDispatch();
 
-  const addDebug = (message) => {
-    const timestamp = new Date().toLocaleTimeString();
-    const debugMessage = `[${timestamp}] ${message}`;
-    console.log(debugMessage);
-    setDebugInfo(prev => `${debugMessage}\n${prev}`);
-  };
+  useEffect(() => {
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.stop();
+      }
+    };
+  }, []);
 
   const startCamera = async () => {
     try {
       setShowPermissionRequest(false);
       setError(null);
-      setScanning(true); // Set scanning to true first so the element renders
+      setScanning(true);
       
-      // Add a small delay to ensure the DOM element is ready
       await new Promise(resolve => setTimeout(resolve, 100));
       
       const qrElement = document.getElementById('qr-reader');
@@ -38,7 +34,6 @@ function Scanner() {
         throw new Error('QR scanner element not found');
       }
 
-      addDebug('Initializing QR scanner...');
       const html5QrCode = new Html5Qrcode("qr-reader");
       scannerRef.current = html5QrCode;
 
@@ -49,7 +44,6 @@ function Scanner() {
         formatsToSupport: ['qr_code']
       };
 
-      addDebug('Starting camera...');
       await html5QrCode.start(
         { facingMode: "environment" },
         config,
@@ -60,174 +54,25 @@ function Scanner() {
           // Only log errors that aren't related to normal QR code scanning
           if (!errorMessage.includes('QR code parse error') && 
               !errorMessage.includes('No QR code found')) {
-            addDebug(`Scanning error: ${errorMessage}`);
+            console.error('Scanning error:', errorMessage);
           }
         }
       );
-
-      addDebug('Camera started successfully');
     } catch (err) {
       console.error('Start camera error:', err);
       setError(err.message || 'Failed to start camera');
       setScanning(false);
       setShowPermissionRequest(true);
-      addDebug(`Error: ${err.message}`);
     }
   };
 
   const stopCamera = async () => {
     if (scannerRef.current) {
-      try {
-        addDebug('Stopping camera...');
-        await scannerRef.current.stop();
-        scannerRef.current = null;
-        addDebug('Camera stopped');
-      } catch (err) {
-        console.error('Error stopping camera:', err);
-        addDebug(`Error stopping camera: ${err.message}`);
-      }
+      await scannerRef.current.stop();
+      scannerRef.current = null;
     }
     setScanning(false);
     setShowPermissionRequest(true);
-  };
-
-  useEffect(() => {
-    return () => {
-      stopCamera();
-    };
-  }, []);
-
-  const checkCameraSupport = async () => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error('Camera API is not supported in this browser');
-    }
-
-    try {
-      // Check if we can enumerate devices
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cameras = devices.filter(device => device.kind === 'videoinput');
-      
-      if (cameras.length === 0) {
-        throw new Error('No camera devices found');
-      }
-
-      // Check if we already have permission
-      const permission = await navigator.permissions.query({ name: 'camera' });
-      setPermissionState(permission.state);
-      
-      return cameras;
-    } catch (err) {
-      console.error('Camera support check error:', err);
-      throw new Error('Failed to check camera support: ' + err.message);
-    }
-  };
-
-  const requestCameraPermission = async () => {
-    try {
-      setShowPermissionRequest(false);
-      setError(null);
-
-      // First check if camera is supported
-      await checkCameraSupport();
-
-      // Try to get the camera stream
-      const constraints = {
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      };
-
-      console.log('Requesting camera with constraints:', constraints);
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      
-      // Check if we actually got a valid stream
-      const tracks = stream.getVideoTracks();
-      if (!tracks || tracks.length === 0) {
-        throw new Error('No video track available in the camera stream');
-      }
-
-      console.log('Camera stream obtained:', tracks[0].getSettings());
-      setPermissionState('granted');
-      return stream;
-    } catch (err) {
-      console.error('Camera permission error:', {
-        name: err.name,
-        message: err.message,
-        constraint: err.constraint,
-        stack: err.stack
-      });
-
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setPermissionState('denied');
-        throw new Error('Camera permission was denied. Please grant camera access to use the scanner.');
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        throw new Error('No camera found on your device.');
-      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-        throw new Error('Your camera is in use by another application.');
-      } else if (err.name === 'OverconstrainedError' || err.name === 'ConstraintNotSatisfiedError') {
-        throw new Error('Could not find a suitable camera. Please try using a different camera.');
-      }
-      
-      throw new Error(`Camera error: ${err.message}`);
-    }
-  };
-
-  const handleRetry = () => {
-    setError(null);
-    setShowPermissionRequest(true);
-    setPermissionState('prompt');
-    if (scannerRef.current) {
-      stopCamera();
-    }
-  };
-
-  const toggleFlashlight = async () => {
-    if (!scannerRef.current) return;
-    
-    try {
-      const track = scannerRef.current.getVideoTracks()[0];
-      if (track && track.getCapabilities().torch) {
-        await track.applyConstraints({
-          advanced: [{ torch: !flashlightOn }]
-        });
-        setFlashlightOn(!flashlightOn);
-      }
-    } catch (err) {
-      console.error('Flashlight not available', err);
-    }
-  };
-
-  const tick = () => {
-    if (!scanning) {
-      console.log('Scanning stopped, tick cancelled');
-      return;
-    }
-
-    if (scannerRef.current && scannerRef.current.readyState === scannerRef.current.HAVE_ENOUGH_DATA) {
-      console.log('Processing video frame');
-      const canvas = canvasRef.current;
-      const video = scannerRef.current;
-      
-      canvas.height = video.videoHeight;
-      canvas.width = video.videoWidth;
-      
-      const context = canvas.getContext('2d');
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-      
-      const code = jsQR(imageData.data, imageData.width, imageData.height);
-      
-      if (code) {
-        console.log('QR code found:', code);
-        handleQRCode(code.data);
-        return;
-      }
-    } else if (scannerRef.current) {
-      console.log('Video not ready:', scannerRef.current.readyState);
-    }
-    requestAnimationFrame(tick);
   };
 
   const handleQRCode = async (qrData) => {
@@ -271,11 +116,6 @@ function Scanner() {
     setNotes('');
     startCamera();
   };
-
-  // Sort check-in logs by timestamp in descending order (most recent first)
-  const sortedLogs = reservation?.checkInLogs ? 
-    [...reservation.checkInLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) :
-    [];
 
   return (
     <div className="min-h-screen bg-[#EDF0F4]">
@@ -332,12 +172,6 @@ function Scanner() {
           </div>
         </div>
       ) : null}
-
-      {debugInfo && (
-        <div className="fixed bottom-4 right-4 max-w-sm bg-black bg-opacity-75 text-white p-4 rounded-lg text-sm font-mono">
-          <pre className="whitespace-pre-wrap">{debugInfo}</pre>
-        </div>
-      )}
     </div>
   );
 }
