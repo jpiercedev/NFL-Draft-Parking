@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>QR Scanner Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: sans-serif;
+        }
+        
+        #video-container {
+            line-height: 0;
+            width: 100%;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        
+        #qr-video {
+            width: 100%;
+            height: auto;
+        }
+        
+        #close-button {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            background: #0449FE;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        
+        #cam-qr-result {
+            font-weight: bold;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Scan from WebCam:</h1>
+    <div id="video-container">
+        <video id="qr-video"></video>
+    </div>
+    <div>
+        <b>Detected QR code: </b>
+        <span id="cam-qr-result">None</span>
+    </div>
+    <div>
+        <b>Last detected at: </b>
+        <span id="cam-qr-result-timestamp"></span>
+    </div>
+    <button id="close-button">Close Scanner</button>
+
+    <script type="module">
+        import QrScanner from '/node_modules/qr-scanner/qr-scanner.min.js';
+        
+        // Set up elements
+        const video = document.getElementById('qr-video');
+        const camQrResult = document.getElementById('cam-qr-result');
+        const camQrResultTimestamp = document.getElementById('cam-qr-result-timestamp');
+        const closeButton = document.getElementById('close-button');
+
+        // Function to handle QR code result
+        function setResult(label, result) {
+            console.log(result.data);
+            label.textContent = result.data;
+            camQrResultTimestamp.textContent = new Date().toString();
+            
+            // Send result to parent window
+            try {
+                window.parent.postMessage({
+                    type: 'qr-result',
+                    data: result.data
+                }, '*');
+            } catch (e) {
+                console.error('Error sending result to parent:', e);
+            }
+        }
+
+        // Close button handler
+        closeButton.addEventListener('click', () => {
+            try {
+                window.parent.postMessage('close', '*');
+            } catch (e) {
+                console.error('Error sending close message to parent:', e);
+                window.close();
+            }
+        });
+
+        // Create QR scanner instance
+        const scanner = new QrScanner(
+            video,
+            result => setResult(camQrResult, result),
+            {
+                onDecodeError: error => {
+                    camQrResult.textContent = error;
+                },
+                highlightScanRegion: true,
+                highlightCodeOutline: true,
+                preferredCamera: 'environment'
+            }
+        );
+
+        // Start scanner
+        scanner.start().then(() => {
+            console.log('Scanner started');
+            
+            // Send debug message to parent
+            try {
+                window.parent.postMessage({
+                    type: 'debug',
+                    data: 'QR Scanner started successfully'
+                }, '*');
+            } catch (e) {
+                console.error('Error sending debug message to parent:', e);
+            }
+            
+            // List cameras
+            QrScanner.listCameras(true).then(cameras => cameras.forEach(camera => {
+                console.log(`Camera: ${camera.id} - ${camera.label}`);
+                
+                // Send debug message to parent
+                try {
+                    window.parent.postMessage({
+                        type: 'debug',
+                        data: `Camera: ${camera.id} - ${camera.label}`
+                    }, '*');
+                } catch (e) {
+                    console.error('Error sending debug message to parent:', e);
+                }
+            }));
+        }).catch(err => {
+            console.error('Failed to start scanner:', err);
+            
+            // Send error message to parent
+            try {
+                window.parent.postMessage({
+                    type: 'error',
+                    data: err.message
+                }, '*');
+            } catch (e) {
+                console.error('Error sending error message to parent:', e);
+            }
+        });
+
+        // For debugging
+        window.scanner = scanner;
+    </script>
+</body>
+</html>

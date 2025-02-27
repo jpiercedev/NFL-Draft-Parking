@@ -1,22 +1,101 @@
-import { useState, useEffect, useRef } from 'react';
-import jsQR from 'jsqr';
+import React, { useState, useRef, useEffect } from 'react';
 import { useDispatch } from 'react-redux';
-import axios from 'axios';
 import { format } from 'date-fns';
+import { Html5Qrcode } from 'html5-qrcode';
+import './Scanner.css';
 
 function Scanner() {
   const [scanning, setScanning] = useState(false);
-  const [reservation, setReservation] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [showPermissionRequest, setShowPermissionRequest] = useState(true);
-  const [permissionState, setPermissionState] = useState('prompt');
-  const [notes, setNotes] = useState('');
-  const [flashlightOn, setFlashlightOn] = useState(false);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
+  const [error, setError] = useState(null);
+  const [debugInfo, setDebugInfo] = useState('');
+  const [reservation, setReservation] = useState(null);
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [note, setNote] = useState('');
+  const [history, setHistory] = useState([]);
+  const [isCheckIn, setIsCheckIn] = useState(true);
   const dispatch = useDispatch();
+  const scannerRef = useRef(null);
+
+  const addDebug = (message) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const debugMessage = `[${timestamp}] ${message}`;
+    console.log(debugMessage);
+    setDebugInfo(prev => `${debugMessage}\n${prev}`);
+  };
+
+  const startCamera = async () => {
+    try {
+      setShowPermissionRequest(false);
+      setError(null);
+      setScanning(true); // Set scanning to true first so the element renders
+      
+      // Add a small delay to ensure the DOM element is ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      const qrElement = document.getElementById('qr-reader');
+      if (!qrElement) {
+        throw new Error('QR scanner element not found');
+      }
+
+      addDebug('Initializing QR scanner...');
+      const html5QrCode = new Html5Qrcode("qr-reader");
+      scannerRef.current = html5QrCode;
+
+      const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1.0,
+        formatsToSupport: ['qr_code']
+      };
+
+      addDebug('Starting camera...');
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        config,
+        (decodedText) => {
+          handleQRCode(decodedText);
+        },
+        (errorMessage) => {
+          // Only log errors that aren't related to normal QR code scanning
+          if (!errorMessage.includes('QR code parse error') && 
+              !errorMessage.includes('No QR code found')) {
+            addDebug(`Scanning error: ${errorMessage}`);
+          }
+        }
+      );
+
+      addDebug('Camera started successfully');
+    } catch (err) {
+      console.error('Start camera error:', err);
+      setError(err.message || 'Failed to start camera');
+      setScanning(false);
+      setShowPermissionRequest(true);
+      addDebug(`Error: ${err.message}`);
+    }
+  };
+
+  const stopCamera = async () => {
+    if (scannerRef.current) {
+      try {
+        addDebug('Stopping camera...');
+        await scannerRef.current.stop();
+        scannerRef.current = null;
+        addDebug('Camera stopped');
+      } catch (err) {
+        console.error('Error stopping camera:', err);
+        addDebug(`Error stopping camera: ${err.message}`);
+      }
+    }
+    setScanning(false);
+    setShowPermissionRequest(true);
+  };
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
 
   const checkCameraSupport = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -95,69 +174,20 @@ function Scanner() {
     }
   };
 
-  const startCamera = async () => {
-    try {
-      const stream = await requestCameraPermission();
-      streamRef.current = stream;
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        
-        // Wait for the video to be ready
-        await new Promise((resolve) => {
-          videoRef.current.onloadedmetadata = () => {
-            resolve();
-          };
-        });
-
-        await videoRef.current.play();
-        setScanning(true);
-        requestAnimationFrame(tick);
-      }
-    } catch (err) {
-      console.error('Start camera error:', err);
-      setError(err.message);
-      setScanning(false);
-      setShowPermissionRequest(true);
-    }
-  };
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setScanning(false);
-  };
-
-  useEffect(() => {
-    // Check camera support on mount
-    checkCameraSupport().catch(err => {
-      setError(err.message);
-    });
-
-    return () => {
-      stopCamera();
-    };
-  }, []);
-
   const handleRetry = () => {
     setError(null);
     setShowPermissionRequest(true);
     setPermissionState('prompt');
-    if (streamRef.current) {
+    if (scannerRef.current) {
       stopCamera();
     }
   };
 
   const toggleFlashlight = async () => {
-    if (!streamRef.current) return;
+    if (!scannerRef.current) return;
     
     try {
-      const track = streamRef.current.getVideoTracks()[0];
+      const track = scannerRef.current.getVideoTracks()[0];
       if (track && track.getCapabilities().torch) {
         await track.applyConstraints({
           advanced: [{ torch: !flashlightOn }]
@@ -170,11 +200,15 @@ function Scanner() {
   };
 
   const tick = () => {
-    if (!scanning) return;
+    if (!scanning) {
+      console.log('Scanning stopped, tick cancelled');
+      return;
+    }
 
-    if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+    if (scannerRef.current && scannerRef.current.readyState === scannerRef.current.HAVE_ENOUGH_DATA) {
+      console.log('Processing video frame');
       const canvas = canvasRef.current;
-      const video = videoRef.current;
+      const video = scannerRef.current;
       
       canvas.height = video.videoHeight;
       canvas.width = video.videoWidth;
@@ -186,9 +220,12 @@ function Scanner() {
       const code = jsQR(imageData.data, imageData.width, imageData.height);
       
       if (code) {
+        console.log('QR code found:', code);
         handleQRCode(code.data);
         return;
       }
+    } else if (scannerRef.current) {
+      console.log('Video not ready:', scannerRef.current.readyState);
     }
     requestAnimationFrame(tick);
   };
@@ -240,85 +277,6 @@ function Scanner() {
     [...reservation.checkInLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) :
     [];
 
-  if (showPermissionRequest) {
-    return (
-      <div className="min-h-screen bg-[#EDF0F4] flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
-          <div className="mb-4 text-[#0449FE]">
-            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-semibold text-[#040510] mb-2">Camera Access Required</h2>
-          <p className="text-[#4C4E61] mb-6">
-            To scan QR codes, we need access to your camera. Click below to enable camera access.
-          </p>
-          <button
-            onClick={startCamera}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
-          >
-            Enable Camera
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen bg-[#EDF0F4] flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
-          <div className="mb-4 text-red-600">
-            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-semibold text-[#040510] mb-2">Camera Access Required</h2>
-          <p className="text-[#4C4E61] mb-6">
-            {permissionState === 'denied' 
-              ? "Camera access was denied. Please enable camera access in your browser settings to use the QR scanner."
-              : "Unable to access camera. Please make sure you have granted camera permissions."}
-          </p>
-          {permissionState === 'denied' ? (
-            <div className="space-y-4">
-              <p className="text-sm text-[#4C4E61]">
-                To enable camera access:
-                <br />
-                1. Click the camera icon in your browser's address bar
-                <br />
-                2. Select "Allow" for camera access
-                <br />
-                3. Refresh this page
-              </p>
-              <button
-                onClick={() => window.location.reload()}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
-              >
-                Refresh Page
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={handleRetry}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
-            >
-              Try Again
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#EDF0F4]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#0449FE]"></div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-[#EDF0F4]">
       {scanning ? (
@@ -329,165 +287,57 @@ function Scanner() {
               Scan QR codes to check in or out vehicles
             </p>
           </div>
-          <video
-            ref={videoRef}
-            className="w-full h-screen object-cover"
-            playsInline
-          />
-          <canvas
-            ref={canvasRef}
-            className="hidden"
-          />
-          <div className="absolute inset-0 bg-black bg-opacity-30 flex flex-col items-center justify-center">
-            <div className="w-64 h-64 border-4 border-white rounded-lg flex items-center justify-center">
-              <div className="w-3/4 h-3/4 border border-white border-opacity-50 rounded"></div>
-            </div>
-            
-            <p className="text-white text-lg font-medium mt-8 mb-4 px-8 text-center">
-              Scan the QR code on the parking sign
-            </p>
+          
+          <div id="qr-reader" className="w-full h-screen">
+            <div className="scanner-overlay" />
+            <div className="scanner-frame" />
           </div>
           
-          <div className="absolute bottom-8 inset-x-0 flex justify-center space-x-4">
+          <div className="absolute bottom-8 inset-x-0 flex justify-center">
             <button 
-              onClick={toggleFlashlight}
-              className={`p-4 rounded-full shadow-lg transition-colors duration-150 ${
-                flashlightOn 
-                  ? 'bg-[#0449FE] hover:bg-[#033ACC]' 
-                  : 'bg-white hover:bg-[#EDF0F4]'
-              }`}
-              aria-label="Toggle flashlight"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className={`h-6 w-6 ${flashlightOn ? 'text-white' : 'text-[#0449FE]'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-              </svg>
-            </button>
-            
-            <button 
-              onClick={resetScanner}
-              className="p-4 bg-white hover:bg-[#EDF0F4] rounded-full shadow-lg transition-colors duration-150"
+              onClick={stopCamera}
+              className="p-4 bg-white hover:bg-gray-100 rounded-full shadow-lg transition-colors duration-150"
               aria-label="Cancel scanning"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-[#E53935]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
         </div>
-      ) : reservation ? (
-        <div className="container mx-auto px-4 py-8">
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-[#A8B0C0] border-opacity-20">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-semibold text-[#040510]">Reservation Details</h2>
-              <button
-                onClick={resetScanner}
-                className="inline-flex items-center px-3 py-2 border border-[#0449FE] text-[#0449FE] font-medium rounded-md hover:bg-[#0449FE] hover:text-white transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-[#0449FE] focus:ring-offset-2"
-              >
-                Scan Another
-              </button>
+      ) : showPermissionRequest ? (
+        <div className="min-h-screen flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
+            <div className="mb-4 text-[#0449FE]">
+              <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-              <div>
-                <h3 className="text-lg font-medium text-[#040510] mb-4">Customer Information</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-[#4C4E61]">Name</label>
-                    <div className="mt-1 text-[#040510]">{reservation.customerName}</div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[#4C4E61]">Email</label>
-                    <div className="mt-1 text-[#040510]">{reservation.customerEmail}</div>
-                  </div>
-                </div>
+            <h2 className="text-xl font-semibold text-[#040510] mb-2">Camera Access Required</h2>
+            <p className="text-[#4C4E61] mb-6">
+              To scan QR codes, we need access to your camera. Click below to enable camera access.
+            </p>
+            <button
+              onClick={startCamera}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
+            >
+              Enable Camera
+            </button>
+            {error && (
+              <div className="mt-4 text-red-600 text-sm">
+                {error}
               </div>
-
-              <div>
-                <h3 className="text-lg font-medium text-[#040510] mb-4">Vehicle Information</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-[#4C4E61]">Make & Model</label>
-                    <div className="mt-1 text-[#040510]">
-                      {`${reservation.vehicleMake} ${reservation.vehicleModel}`}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[#4C4E61]">Color</label>
-                    <div className="mt-1 text-[#040510]">{reservation.vehicleColor}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-8">
-              <h3 className="text-lg font-medium text-[#040510] mb-4">Check-in/out</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-[#4C4E61] mb-2">
-                    Notes (optional)
-                  </label>
-                  <textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="shadow-sm focus:ring-[#0449FE] focus:border-[#0449FE] block w-full border-[#A8B0C0] rounded-md p-3 text-[#040510] placeholder-[#A8B0C0]"
-                    rows="3"
-                    placeholder="Add any notes about this check-in/out..."
-                  />
-                </div>
-                <div className="flex space-x-4">
-                  <button
-                    onClick={() => handleCheckInOut('check_in')}
-                    className="flex-1 bg-[#28a745] text-white px-4 py-3 rounded-md hover:bg-[#218838] transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-[#28a745] focus:ring-offset-2 text-base font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={loading}
-                  >
-                    {loading ? 'Processing...' : 'Check In'}
-                  </button>
-                  <button
-                    onClick={() => handleCheckInOut('check_out')}
-                    className="flex-1 bg-[#0449FE] text-white px-4 py-3 rounded-md hover:bg-[#033ACC] transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-[#0449FE] focus:ring-offset-2 text-base font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={loading}
-                  >
-                    {loading ? 'Processing...' : 'Check Out'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-medium text-[#040510] mb-4">Check-in History</h3>
-              <div className="space-y-4">
-                {sortedLogs.length > 0 ? (
-                  <ul className="space-y-4 list-none">
-                    {sortedLogs.map((log) => (
-                      <li key={log.id} className="bg-[#EDF0F4] rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className={`px-3 py-1 text-xs font-semibold rounded-full ${
-                            log.type === 'check_in'
-                              ? 'bg-[#28a745] bg-opacity-10 text-[#28a745]'
-                              : 'bg-[#0449FE] bg-opacity-10 text-[#0449FE]'
-                          }`}>
-                            {log.type === 'check_in' ? 'Check In' : 'Check Out'}
-                          </span>
-                          <span className="text-sm text-[#4C4E61]">
-                            {format(new Date(log.timestamp), 'MMM dd, yyyy h:mm a')}
-                          </span>
-                        </div>
-                        {log.notes && (
-                          <div className="text-sm text-[#4C4E61] mt-2">
-                            {log.notes}
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="text-sm text-[#4C4E61] p-4 bg-[#EDF0F4] rounded-lg">No check-in history available</div>
-                )}
-              </div>
-            </div>
+            )}
           </div>
         </div>
       ) : null}
+
+      {debugInfo && (
+        <div className="fixed bottom-4 right-4 max-w-sm bg-black bg-opacity-75 text-white p-4 rounded-lg text-sm font-mono">
+          <pre className="whitespace-pre-wrap">{debugInfo}</pre>
+        </div>
+      )}
     </div>
   );
 }

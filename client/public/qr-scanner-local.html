@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Scanner</title>
+    <!-- Import QR Scanner library from local files -->
+    <script src="./qr-scanner.min.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+        }
+        #video-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+        #qr-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #result {
+            position: fixed;
+            top: 20px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-family: sans-serif;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            z-index: 10;
+        }
+        #close-button {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            background: white;
+            color: #0449FE;
+            border: none;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            z-index: 10;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #debug-info {
+            position: fixed;
+            bottom: 80px;
+            left: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            z-index: 10;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <video id="qr-video"></video>
+    </div>
+    <div id="result"></div>
+    <div id="debug-info"></div>
+    <button id="close-button" onclick="window.parent.postMessage('close', '*')">Cancel</button>
+
+    <script>
+        // Set the worker path
+        QrScanner.WORKER_PATH = './qr-scanner-worker.min.js';
+        
+        // Debug helper
+        const debugElement = document.getElementById('debug-info');
+        function addDebug(message) {
+            console.log(message);
+            if (debugElement) {
+                debugElement.innerHTML += message + '<br>';
+                debugElement.scrollTop = debugElement.scrollHeight;
+            }
+            
+            // Also send debug info to parent
+            try {
+                window.parent.postMessage({
+                    type: 'debug',
+                    data: message
+                }, '*');
+            } catch (e) {
+                console.error('Error sending debug message to parent:', e);
+            }
+        }
+
+        // Report error to parent
+        function reportError(error) {
+            const errorMessage = error ? (error.message || error.toString()) : 'Unknown error';
+            addDebug('ERROR: ' + errorMessage);
+            
+            try {
+                window.parent.postMessage({
+                    type: 'error',
+                    data: errorMessage
+                }, '*');
+            } catch (e) {
+                console.error('Error sending error message to parent:', e);
+            }
+        }
+
+        // Initialize scanner when page loads
+        window.onload = async function() {
+            addDebug('Initializing scanner...');
+            addDebug('User agent: ' + navigator.userAgent);
+            
+            try {
+                // Check if QrScanner is available
+                if (typeof QrScanner === 'undefined') {
+                    throw new Error('QrScanner library not available');
+                }
+                
+                addDebug('QrScanner library loaded successfully');
+                
+                const video = document.getElementById('qr-video');
+                if (!video) {
+                    throw new Error('Video element not found');
+                }
+                
+                addDebug('Video element found');
+                
+                // Check camera availability
+                const hasCamera = await QrScanner.hasCamera();
+                addDebug('Device has camera: ' + hasCamera);
+                
+                if (!hasCamera) {
+                    throw new Error('No camera available on this device');
+                }
+                
+                // Function to handle successful scan
+                function onScanSuccess(result) {
+                    addDebug('QR code detected: ' + result.data);
+                    
+                    // Send result to parent window
+                    window.parent.postMessage({
+                        type: 'qr-result',
+                        data: result.data
+                    }, '*');
+                }
+                
+                // Create scanner with exact same options as the demo
+                addDebug('Creating QR scanner instance...');
+                const scanner = new QrScanner(
+                    video,
+                    onScanSuccess,
+                    {
+                        onDecodeError: error => {
+                            // This is normal, don't report as an error
+                            console.log('Decode error:', error);
+                        },
+                        highlightScanRegion: true,
+                        highlightCodeOutline: true,
+                        preferredCamera: 'environment'
+                    }
+                );
+                
+                // Start scanner
+                addDebug('Starting scanner...');
+                await scanner.start();
+                addDebug('Scanner started successfully');
+                
+                // List cameras
+                try {
+                    const cameras = await QrScanner.listCameras(true);
+                    addDebug('Available cameras: ' + cameras.length);
+                    cameras.forEach(camera => {
+                        addDebug(`Camera: ${camera.id} - ${camera.label}`);
+                    });
+                } catch (e) {
+                    addDebug('Error listing cameras: ' + e.message);
+                    // Continue anyway
+                }
+                
+                // For debugging
+                window.scanner = scanner;
+                
+                // Clean up when page is unloaded
+                window.addEventListener('beforeunload', () => {
+                    if (scanner) {
+                        scanner.stop();
+                        scanner.destroy();
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error starting scanner:', error);
+                reportError(error);
+            }
+        };
+    </script>
+</body>
+</html>
