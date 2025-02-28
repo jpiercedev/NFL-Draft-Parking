@@ -1,109 +1,133 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useDispatch } from 'react-redux';
 import { format } from 'date-fns';
 import { Html5Qrcode } from 'html5-qrcode';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import { selectReservationById, setReservation, updateReservation } from '../features/reservations/reservationsSlice';
+import axios from 'axios';
 import './Scanner.css';
 
 function Scanner() {
-  const [scanning, setScanning] = useState(false);
-  const [showPermissionRequest, setShowPermissionRequest] = useState(true);
+  const [scanning, setScanning] = useState(true);
   const [error, setError] = useState(null);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const scannerRef = useRef(null);
   const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const { id } = useParams();
+  const reservation = useSelector(state => selectReservationById(state, id));
+
+  const sortedLogs = reservation?.checkInLogs ? 
+    [...reservation.checkInLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) :
+    [];
 
   useEffect(() => {
+    startCamera();
     return () => {
       if (scannerRef.current) {
-        scannerRef.current.stop();
+        try {
+          scannerRef.current.stop().catch(err => {
+            // Silently handle stop errors during cleanup
+            console.log("Cleanup error:", err);
+          });
+        } catch (err) {
+          // Silently handle any errors during cleanup
+          console.log("Cleanup error:", err);
+        }
       }
     };
   }, []);
 
   const startCamera = async () => {
     try {
-      setShowPermissionRequest(false);
-      setError(null);
-      setScanning(true);
-      
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      const qrElement = document.getElementById('qr-reader');
-      if (!qrElement) {
-        throw new Error('QR scanner element not found');
+      // Clean up any existing scanner instance
+      if (scannerRef.current) {
+        try {
+          await scannerRef.current.stop();
+        } catch (err) {
+          console.log("Cleanup during start:", err);
+        }
+      }
+
+      // Check if camera is available
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter(device => device.kind === 'videoinput');
+      console.log('Available cameras:', cameras);
+
+      if (cameras.length === 0) {
+        throw new Error('No cameras found');
       }
 
       const html5QrCode = new Html5Qrcode("qr-reader");
       scannerRef.current = html5QrCode;
 
-      const config = {
-        fps: 10,
-        qrbox: { width: 250, height: 250 },
-        aspectRatio: 1.0,
-        formatsToSupport: ['qr_code']
-      };
-
+      // Start with basic configuration
       await html5QrCode.start(
         { facingMode: "environment" },
-        config,
+        {
+          fps: 10,
+          qrbox: { width: 300, height: 300 }, // Just made the scanning area a bit larger
+          aspectRatio: 1.0
+        },
         (decodedText) => {
+          console.log("QR Code detected:", decodedText);
           handleQRCode(decodedText);
         },
         (errorMessage) => {
-          // Only log errors that aren't related to normal QR code scanning
-          if (!errorMessage.includes('QR code parse error') && 
-              !errorMessage.includes('No QR code found')) {
-            console.error('Scanning error:', errorMessage);
+          // Only log non-QR scanning errors
+          if (!errorMessage.includes('No QR code found')) {
+            console.log("Scanning error:", errorMessage);
           }
         }
       );
+
+      console.log("Camera started successfully");
     } catch (err) {
-      console.error('Start camera error:', err);
-      setError(err.message || 'Failed to start camera');
-      setScanning(false);
-      setShowPermissionRequest(true);
+      console.error('Error starting camera:', err);
+      setError(`Camera error: ${err.message}`);
     }
   };
 
   const stopCamera = async () => {
     if (scannerRef.current) {
-      await scannerRef.current.stop();
-      scannerRef.current = null;
+      try {
+        await scannerRef.current.stop();
+        setScanning(false);
+      } catch (err) {
+        console.log("Error stopping camera:", err);
+        // Still set scanning to false even if stop fails
+        setScanning(false);
+      }
     }
-    setScanning(false);
-    setShowPermissionRequest(true);
   };
 
   const handleQRCode = async (qrData) => {
-    setScanning(false);
-    setLoading(true);
     try {
-      const response = await axios.get(`/api/reservations/qr/${qrData}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-      });
-      setReservation(response.data);
+      console.log("Processing QR code:", qrData); // Debug log
+      await stopCamera();
+      const response = await axios.get(`/api/reservations/${qrData}`);
+      console.log("Reservation data:", response.data); // Debug log
+      dispatch(setReservation(response.data));
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to fetch reservation details');
-    } finally {
-      setLoading(false);
+      console.error('Error fetching reservation:', err);
+      setError('Invalid QR code or reservation not found');
+      startCamera();
     }
   };
 
   const handleCheckInOut = async (type) => {
-    if (!reservation) return;
-    
-    setLoading(true);
     try {
-      const response = await axios.post(
-        `/api/reservations/${reservation.id}/log`,
-        { type, notes },
-        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
-      );
-      setReservation(response.data);
+      setLoading(true);
+      const response = await axios.post(`/api/reservations/${reservation.id}/${type}`, {
+        notes: notes
+      });
+      dispatch(updateReservation(response.data));
       setNotes('');
     } catch (err) {
-      setError(err.response?.data?.error || `Failed to log ${type}`);
+      console.error(`Error during ${type}:`, err);
+      setError(`Failed to ${type.replace('_', ' ')}. Please try again.`);
     } finally {
       setLoading(false);
     }
@@ -111,7 +135,7 @@ function Scanner() {
 
   const resetScanner = () => {
     setScanning(true);
-    setReservation(null);
+    dispatch(setReservation(null));
     setError(null);
     setNotes('');
     startCamera();
@@ -145,30 +169,129 @@ function Scanner() {
             </button>
           </div>
         </div>
-      ) : showPermissionRequest ? (
+      ) : reservation ? (
+        <div className="container mx-auto px-4 py-8">
+          <div className="bg-white rounded-lg shadow-sm p-6 border border-[#A8B0C0] border-opacity-20">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-semibold text-[#040510]">Reservation Details</h2>
+              <button
+                onClick={resetScanner}
+                className="inline-flex items-center px-3 py-2 border border-[#0449FE] text-[#0449FE] font-medium rounded-md hover:bg-[#0449FE] hover:text-white transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-[#0449FE] focus:ring-offset-2"
+              >
+                Scan Another
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+              <div>
+                <h3 className="text-lg font-medium text-[#040510] mb-4">Customer Information</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-[#4C4E61]">Name</label>
+                    <div className="mt-1 text-[#040510]">{reservation.customerName}</div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[#4C4E61]">Email</label>
+                    <div className="mt-1 text-[#040510]">{reservation.customerEmail}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-lg font-medium text-[#040510] mb-4">Vehicle Information</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-[#4C4E61]">Make & Model</label>
+                    <div className="mt-1 text-[#040510]">
+                      {`${reservation.vehicleMake} ${reservation.vehicleModel}`}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[#4C4E61]">Color</label>
+                    <div className="mt-1 text-[#040510]">{reservation.vehicleColor}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-8">
+              <h3 className="text-lg font-medium text-[#040510] mb-4">Check-in/out</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-[#4C4E61] mb-2">
+                    Notes (optional)
+                  </label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="shadow-sm focus:ring-[#0449FE] focus:border-[#0449FE] block w-full border-[#A8B0C0] rounded-md p-3 text-[#040510] placeholder-[#A8B0C0]"
+                    rows="3"
+                    placeholder="Add any notes about this check-in/out..."
+                  />
+                </div>
+                <div className="flex space-x-4">
+                  <button
+                    onClick={() => handleCheckInOut('check_in')}
+                    className="flex-1 bg-[#28a745] text-white px-4 py-3 rounded-md hover:bg-[#218838] transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-[#28a745] focus:ring-offset-2 text-base font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={loading}
+                  >
+                    {loading ? 'Processing...' : 'Check In'}
+                  </button>
+                  <button
+                    onClick={() => handleCheckInOut('check_out')}
+                    className="flex-1 bg-[#0449FE] text-white px-4 py-3 rounded-md hover:bg-[#033ACC] transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-[#0449FE] focus:ring-offset-2 text-base font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={loading}
+                  >
+                    {loading ? 'Processing...' : 'Check Out'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium text-[#040510] mb-4">Check-in History</h3>
+              <div className="space-y-4">
+                {sortedLogs.length > 0 ? (
+                  <ul className="space-y-4 list-none">
+                    {sortedLogs.map((log) => (
+                      <li key={log.id} className="bg-[#EDF0F4] rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`px-3 py-1 text-xs font-semibold rounded-full ${
+                            log.type === 'check_in'
+                              ? 'bg-[#28a745] bg-opacity-10 text-[#28a745]'
+                              : 'bg-[#0449FE] bg-opacity-10 text-[#0449FE]'
+                          }`}>
+                            {log.type === 'check_in' ? 'Check In' : 'Check Out'}
+                          </span>
+                          <span className="text-sm text-[#4C4E61]">
+                            {format(new Date(log.timestamp), 'MMM dd, yyyy h:mm a')}
+                          </span>
+                        </div>
+                        {log.notes && (
+                          <div className="text-sm text-[#4C4E61] mt-2">
+                            {log.notes}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-sm text-[#4C4E61] p-4 bg-[#EDF0F4] rounded-lg">No check-in history available</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : error ? (
         <div className="min-h-screen flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
-            <div className="mb-4 text-[#0449FE]">
-              <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-semibold text-[#040510] mb-2">Camera Access Required</h2>
-            <p className="text-[#4C4E61] mb-6">
-              To scan QR codes, we need access to your camera. Click below to enable camera access.
-            </p>
+            <div className="text-red-500 mb-4">{error}</div>
             <button
-              onClick={startCamera}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#0449FE] hover:bg-[#033ACC] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#0449FE]"
+              onClick={resetScanner}
+              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
             >
-              Enable Camera
+              Try Again
             </button>
-            {error && (
-              <div className="mt-4 text-red-600 text-sm">
-                {error}
-              </div>
-            )}
           </div>
         </div>
       ) : null}
